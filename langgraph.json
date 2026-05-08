@@ -1,0 +1,7 @@
+{
+  "dependencies" : ["."],
+  "graphs" : {
+    "remember_item_agent" : "app/agents/app.py:agent"
+  },
+  "env" : ".env"
+}

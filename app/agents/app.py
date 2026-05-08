@@ -1,0 +1,213 @@
+import os
+import sqlite3
+from contextvars import ContextVar
+
+from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk
+from langchain_core.tools import tool
+
+from app.common.logger import logger
+from app.services import items as item_service
+from dotenv import load_dotenv
+
+from langchain.chat_models import init_chat_model
+from langchain.agents import create_agent
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+load_dotenv()
+
+model = init_chat_model(
+    model=os.getenv("REMEMBER_ITEM_MODEL", "qwen3.5-flash"),
+    model_provider="openai",
+    base_url=os.getenv("DASHSCOPE_BASE_URL"),
+    api_key=os.getenv("DASHSCOPE_API_KEY"),
+)
+
+db_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "db")
+os.makedirs(db_dir, exist_ok=True)
+connection = sqlite3.connect(
+    os.path.join(db_dir, "remember_item_checkpoints.db"),
+    check_same_thread=False,
+)
+# 初始化checkpointer
+checkpointer = SqliteSaver(connection)
+# 自动建表
+checkpointer.setup()
+
+current_user_id: ContextVar[int | None] = ContextVar(
+    "current_user_id",
+    default=None,
+)
+
+
+def _require_user_id() -> int:
+    user_id = current_user_id.get()
+    if user_id is None:
+        raise RuntimeError("Missing current user")
+    return user_id
+
+
+@tool
+def search_items(keyword: str = "", limit: int = 10) -> list[dict]:
+    """Search saved items by name. Use empty keyword to list recent items."""
+    return item_service.list_items(
+        user_id=_require_user_id(),
+        keyword=keyword or None,
+        limit=limit,
+    )
+
+
+@tool
+def add_item(name: str, description: str | None = None, image_url: str | None = None) -> dict:
+    """Add a new remembered item with required name and optional description/image URL."""
+    return item_service.create_item(
+        user_id=_require_user_id(),
+        name=name,
+        description=description,
+        image_url=image_url,
+    )
+
+
+@tool
+def update_saved_item(
+    item_id: int,
+    name: str | None = None,
+    description: str | None = None,
+    image_url: str | None = None,
+) -> dict:
+    """Update an existing remembered item by id."""
+    item = item_service.update_item(
+        user_id=_require_user_id(),
+        item_id=item_id,
+        name=name,
+        description=description,
+        image_url=image_url,
+    )
+    if not item:
+        return {"error": "Item not found", "item_id": item_id}
+    return item
+
+
+@tool
+def delete_saved_item(item_id: int) -> dict:
+    """Delete a remembered item by id."""
+    deleted = item_service.delete_item(_require_user_id(), item_id)
+    return {"success": deleted, "item_id": item_id}
+
+
+system_prompt = """
+角色设定：
+你是 RememberItem 的 AI 记物助手，帮助用户记录、查找和整理自己的物品。
+
+你可以和用户自然对话，也可以调用工具操作物品库：
+1. 用户想找某个物品、问“我有没有某东西”“帮我查一下”时，优先调用 search_items。
+2. 用户明确说要记住、添加、保存某个物品时，调用 add_item。物品名称必填，描述和图片可选。
+3. 用户想修改某个已保存物品时，先确认或查到 item_id，再调用 update_saved_item。
+4. 用户想删除物品时，先确认或查到 item_id，再调用 delete_saved_item。
+5. 用户上传图片时，如果图片里能看出物品信息，可以结合图片和文字帮助生成名称/描述；如果信息不足，要简短追问。
+
+回答风格：
+- 用中文回答。
+- 工具操作成功后，明确告诉用户已完成，并概括物品名称、描述、图片是否保存。
+- 如果查不到，告诉用户没有找到，并建议换关键词或直接新增。
+- 不要编造数据库里不存在的物品。
+"""
+
+agent = create_agent(
+    model = model,
+    tools=[search_items, add_item, update_saved_item, delete_saved_item],
+    checkpointer=checkpointer,
+    system_prompt = system_prompt,
+)
+
+# 流式对话
+async def chat_with_remember_item(
+    prompt: str,
+    image: str | None,
+    thread_id: str,
+    user_id: int,
+):
+    """调用 RememberItem Agent 处理对话和物品操作"""
+    logger.info(f"[用户]: {prompt}, image: {image}, thread_id: {thread_id}")
+    user_token = current_user_id.set(user_id)
+    try:
+        # 判断是否有图片，封装不同格式的消息
+        if not image or image.strip() == "":
+            message = HumanMessage(content=prompt)
+        else:
+            message = HumanMessage(content=[
+                {"type": "image_url", "image_url": {"url": image}},
+                {"type": "text", "text": prompt}
+            ])
+
+        # 流式调用Agent
+        for chunk, metadata in agent.stream(
+            {"messages": [message]},
+            {"configurable": {"thread_id": thread_id}},
+            stream_mode="messages"
+        ):
+            if isinstance(chunk, AIMessageChunk) and chunk.content:
+                yield chunk.content
+
+    except Exception as e:
+        logger.error(f"\n[错误]: {str(e)}")
+        yield "这次处理失败了，可以换个说法再试一次。"
+    finally:
+        current_user_id.reset(user_token)
+
+# 清空会话
+def clear_messages(thread_id: str):
+    """清空会话"""
+    logger.info(f"清空历史消息，thread_id: {thread_id}")
+    checkpointer.delete_thread(thread_id)
+
+# 查询会话历史
+def get_messages(thread_id: str) -> list[dict[str, str]]:
+    """获取会话历史"""
+    logger.info(f"获取历史消息，thread_id: {thread_id}")
+
+    # 根据 thread_id 查询 checkpoint
+    checkpoint = checkpointer.get({"configurable": {"thread_id": thread_id}})
+
+    # 如果不存在，返回空列表
+    if not checkpoint:
+        return []
+
+    # 安全获取 messages
+    channel_values = checkpoint.get("channel_values")
+    if not channel_values:
+        return []
+
+    messages = channel_values.get("messages", [])
+    if not messages:
+        return []
+
+    # 转换消息格式
+    result = []
+    for msg in messages:
+        if not msg.content:
+            continue
+
+        if isinstance(msg, HumanMessage):
+            result.append({"role": "user", "content": _message_content_to_text(msg.content)})
+        elif isinstance(msg, AIMessage):
+            result.append({"role": "assistant", "content": _message_content_to_text(msg.content)})
+
+    return result
+
+
+def _message_content_to_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "text":
+                parts.append(item.get("text", ""))
+            elif item.get("type") == "image_url":
+                image_url = item.get("image_url", {}).get("url", "")
+                if image_url:
+                    parts.append(f"[图片] {image_url}")
+        return "\n".join(part for part in parts if part)
+    return str(content)

@@ -1,0 +1,10 @@
+.venv/
+.idea/
+.langgraph_api/
+.env
+__pycache__/
+*.pyc
+app/db/remember_item*.db*
+app/db/*.db*
+frontend/node_modules/
+frontend/dist/
