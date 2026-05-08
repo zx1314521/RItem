@@ -10,6 +10,7 @@ from app.api.v1 import items
 from app.api.v1 import oss
 from app.api.v1 import settings
 from app.common.logger import setup_logging
+from app.mcp_server import mcp
 from app.services.auth import init_auth_db
 from app.services.chat_threads import init_chat_threads_db
 from app.services.items import init_items_db
@@ -43,7 +44,24 @@ app.include_router(items.router, prefix="/api/v1", tags=["物品"])
 app.include_router(oss.router, prefix="/api/v1", tags=["申请上传签名url"])
 app.include_router(settings.router, prefix="/api/v1", tags=["设置"])
 
-# 3.挂载前端资源
+# 3. 挂载远程 MCP。客户端地址是 /mcp/，请求头使用 Authorization: Bearer <token>
+app.mount("/mcp", mcp.streamable_http_app(), name="mcp")
+_mcp_lifespan_manager = None
+
+
+@app.on_event("startup")
+async def start_mcp_session_manager():
+    global _mcp_lifespan_manager
+    _mcp_lifespan_manager = mcp.session_manager.run()
+    await _mcp_lifespan_manager.__aenter__()
+
+
+@app.on_event("shutdown")
+async def stop_mcp_session_manager():
+    if _mcp_lifespan_manager is not None:
+        await _mcp_lifespan_manager.__aexit__(None, None, None)
+
+# 4.挂载前端资源
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")

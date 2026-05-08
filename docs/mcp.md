@@ -108,6 +108,70 @@ $env:REMEMBER_ITEM_MCP_CONFIG_MODE = "published"
 - 打包一个 `rememberitem-mcp` 命令，由它负责启动 `app/mcp_server.py`。
 - 做成远程 MCP 服务，例如 `https://your-domain.com/mcp`，这样外部客户端不需要本地 `command` 和 `args`。
 
+## 远程 MCP 配置
+
+RememberItem 后端已经挂载了远程 Streamable HTTP MCP 端点：
+
+```text
+/mcp/
+```
+
+如果服务器公网 IP 是 `115.191.21.161`，远程 MCP 地址就是：
+
+```text
+http://115.191.21.161/mcp/
+```
+
+注意：这里最后的 `/` 建议保留。
+
+远程 MCP 不需要配置服务器内部路径，也不需要配置：
+
+```json
+"command": "/opt/rememberitem/.venv/bin/python3"
+```
+
+或：
+
+```json
+"args": ["/opt/rememberitem/app/mcp_server.py"]
+```
+
+远程客户端应该选择 `Streamable HTTP` 或类似的 HTTP MCP 类型，然后填写 URL 和请求头。
+
+常见配置格式如下：
+
+```json
+{
+  "mcpServers": {
+    "remember-item": {
+      "type": "streamable-http",
+      "url": "http://115.191.21.161/mcp/",
+      "headers": {
+        "Authorization": "Bearer your-access-token"
+      }
+    }
+  }
+}
+```
+
+有些客户端字段名可能不同，例如：
+
+```json
+{
+  "name": "RememberItem",
+  "url": "http://115.191.21.161/mcp/",
+  "auth": "Bearer your-access-token"
+}
+```
+
+核心不变：
+
+- 类型选择 HTTP / Streamable HTTP MCP。
+- URL 填 `http://服务器IP/mcp/`。
+- 认证填 `Authorization: Bearer <access_token>`。
+
+如果客户端只有“标准输入 / stdio”类型，没有 HTTP MCP 类型，那它不能直接连接远程 MCP，只能使用本地 `command + args` 的 stdio 配置。
+
 ## 权限开关
 
 MCP Server 每次执行工具前都会读取 `/api/v1/settings` 检查权限。
