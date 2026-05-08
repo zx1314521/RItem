@@ -531,12 +531,19 @@ app/mcp_server.py
 
 这只适合本地开发。
 
-服务器发布给别人时不要暴露服务器路径。后面正式做 MCP 发布时，建议二选一：
+服务器发布给别人时不要暴露服务器路径。当前项目已经支持远程 MCP，优先使用：
 
-- 打包一个 `rememberitem-mcp` 命令。
-- 改成远程 MCP，例如 `http://服务器IP/mcp` 或以后 `https://域名/mcp`。
+```text
+http://服务器IP/mcp/
+```
 
-当前阶段你先把 Web/API 部署稳定，MCP 发布可以后面再完善。
+如果后端 systemd 里设置了：
+
+```ini
+Environment=REMEMBER_ITEM_MCP_CONFIG_MODE=published
+```
+
+网页设置页会显示远程 HTTP MCP 配置，而不是 `command + args`。
 
 ### 远程 MCP 配置
 

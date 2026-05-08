@@ -72,29 +72,22 @@ cd C:\Repo\PythonProject
 
 本地开发配置里会出现你电脑上的绝对路径，例如 `C:\Repo\PythonProject\...`。这对你自己调试没问题，但发布给别人时不应该暴露。
 
-发布应用时，建议给用户提供一个真正的启动命令，例如：
-
-```text
-rememberitem-mcp
-```
-
-然后在后端运行环境里设置：
+发布应用时，建议直接使用远程 HTTP MCP。先在后端运行环境里设置：
 
 ```powershell
 $env:REMEMBER_ITEM_MCP_CONFIG_MODE = "published"
 ```
 
-设置后，网页设置页会输出发布友好的配置：
+设置后，网页设置页会输出远程 MCP 配置：
 
 ```json
 {
   "mcpServers": {
     "remember-item": {
-      "command": "rememberitem-mcp",
-      "args": [],
-      "env": {
-        "REMEMBER_ITEM_BASE_URL": "http://127.0.0.1:8002",
-        "REMEMBER_ITEM_TOKEN": "your-access-token"
+      "type": "streamable-http",
+      "url": "http://服务器IP/mcp/",
+      "headers": {
+        "Authorization": "Bearer your-access-token"
       }
     }
   }
@@ -103,10 +96,7 @@ $env:REMEMBER_ITEM_MCP_CONFIG_MODE = "published"
 
 这个配置不会暴露开发者电脑里的 `C:\Repo\...` 路径。
 
-后续正式发布时有两种推荐方案：
-
-- 打包一个 `rememberitem-mcp` 命令，由它负责启动 `app/mcp_server.py`。
-- 做成远程 MCP 服务，例如 `https://your-domain.com/mcp`，这样外部客户端不需要本地 `command` 和 `args`。
+以后如果想支持不具备 HTTP MCP 能力的客户端，再额外打包 `rememberitem-mcp` 命令。
 
 ## 远程 MCP 配置
 
@@ -192,7 +182,7 @@ RememberItem 应用内部的 AI Agent 是另一套内部能力，它仍然会按
 
 在源码开发阶段，请使用设置页默认输出的 `python.exe + app/mcp_server.py` 配置。
 
-只有正式发布应用，并且系统里已经能执行 `rememberitem-mcp` 时，才使用发布配置。
+如果已经部署到服务器，优先使用远程 HTTP MCP 配置，也就是 `http://服务器IP/mcp/`。
 
 ### 为什么以前能成功，现在连不上？
 

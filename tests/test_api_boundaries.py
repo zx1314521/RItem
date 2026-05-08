@@ -228,8 +228,9 @@ class ApiBoundaryTests(unittest.TestCase):
         published_server = published_settings.json()["mcp_client_config"]["mcpServers"][
             "remember-item"
         ]
-        self.assertEqual(published_server["command"], "rememberitem-mcp")
-        self.assertEqual(published_server["args"], [])
+        self.assertEqual(published_server["type"], "streamable-http")
+        self.assertTrue(published_server["url"].endswith("/mcp/"))
+        self.assertEqual(published_server["headers"]["Authorization"], "Bearer <access_token>")
         self.assertNotIn("C:\\", str(published_server))
 
         updated = self.client.patch(

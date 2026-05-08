@@ -270,6 +270,19 @@ def _mcp_server_args() -> list[str]:
 
 
 def _mcp_client_config(mcp_base_url: str) -> dict[str, Any]:
+    if os.getenv("REMEMBER_ITEM_MCP_CONFIG_MODE") == "published":
+        return {
+            "mcpServers": {
+                "remember-item": {
+                    "type": "streamable-http",
+                    "url": f"{mcp_base_url.rstrip('/')}/mcp/",
+                    "headers": {
+                        "Authorization": "Bearer <access_token>",
+                    },
+                }
+            }
+        }
+
     return {
         "mcpServers": {
             "remember-item": {
@@ -294,7 +307,10 @@ def _row_to_settings(row: sqlite3.Row, mcp_base_url: str) -> dict[str, Any]:
         "mcp_server_command": _mcp_server_command(),
         "mcp_server_args": _mcp_server_args(),
         "mcp_client_config": _mcp_client_config(mcp_base_url),
-        "mcp_note": "本地开发默认展示可直接运行的 stdio MCP 配置。发布应用时请设置 REMEMBER_ITEM_MCP_CONFIG_MODE=published，改用安装后的 rememberitem-mcp 命令。",
+        "mcp_note": (
+            "本地开发默认展示 stdio MCP 配置。发布应用时设置 "
+            "REMEMBER_ITEM_MCP_CONFIG_MODE=published，设置页会展示远程 HTTP MCP 配置。"
+        ),
         "updated_at": row["updated_at"],
     }
 

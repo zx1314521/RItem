@@ -93,8 +93,12 @@ const mcpConfigText = computed(() => {
       };
   const config = JSON.parse(JSON.stringify(template));
   const rememberServer = config.mcpServers["remember-item"];
-  rememberServer.env = rememberServer.env || {};
-  rememberServer.env.REMEMBER_ITEM_TOKEN = props.token || "<access_token>";
+  if (rememberServer.headers) {
+    rememberServer.headers.Authorization = `Bearer ${props.token || "<access_token>"}`;
+  } else {
+    rememberServer.env = rememberServer.env || {};
+    rememberServer.env.REMEMBER_ITEM_TOKEN = props.token || "<access_token>";
+  }
   return JSON.stringify(config, null, 2);
 });
 
