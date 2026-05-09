@@ -255,7 +255,7 @@ async def chat_with_remember_item(
             ])
 
         # 流式调用Agent
-        async for chunk, metadata in agent.astream(
+        for chunk, metadata in agent.stream(
             {"messages": [message]},
             {"configurable": {"thread_id": thread_id}},
             stream_mode="messages"
