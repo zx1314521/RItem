@@ -37,6 +37,10 @@ current_user_id: ContextVar[int | None] = ContextVar(
     "current_user_id",
     default=None,
 )
+current_image_url: ContextVar[str | None] = ContextVar(
+    "current_image_url",
+    default=None,
+)
 
 
 def _require_user_id() -> int:
@@ -58,12 +62,16 @@ def search_items(keyword: str = "", limit: int = 10) -> list[dict]:
 
 @tool
 def add_item(name: str, description: str | None = None, image_url: str | None = None) -> dict:
-    """Add a new remembered item with required name and optional description/image URL."""
+    """Add a new remembered item with required name and optional description/image URL.
+
+    If the user uploaded an image in the current message, use that image URL when
+    image_url is not explicitly provided.
+    """
     return item_service.create_item(
         user_id=_require_user_id(),
         name=name,
         description=description,
-        image_url=image_url,
+        image_url=image_url or current_image_url.get(),
     )
 
 
@@ -73,14 +81,19 @@ def update_saved_item(
     name: str | None = None,
     description: str | None = None,
     image_url: str | None = None,
+    use_current_image: bool = False,
 ) -> dict:
-    """Update an existing remembered item by id."""
+    """Update an existing remembered item by id.
+
+    Set use_current_image to true when the user wants to attach the image from
+    the current message and no explicit image_url was provided.
+    """
     item = item_service.update_item(
         user_id=_require_user_id(),
         item_id=item_id,
         name=name,
         description=description,
-        image_url=image_url,
+        image_url=image_url or (current_image_url.get() if use_current_image else None),
     )
     if not item:
         return {"error": "Item not found", "item_id": item_id}
@@ -104,6 +117,7 @@ system_prompt = """
 3. 用户想修改某个已保存物品时，先确认或查到 item_id，再调用 update_saved_item。
 4. 用户想删除物品时，先确认或查到 item_id，再调用 delete_saved_item。
 5. 用户上传图片时，如果图片里能看出物品信息，可以结合图片和文字帮助生成名称/描述；如果信息不足，要简短追问。
+6. 如果用户一边上传图片一边要求保存物品，例如“保存苹果在冰箱里”并附带冰箱照片，调用 add_item 时应保存这张图片。当前上传图片的 URL 会在用户消息中以“当前上传图片URL”给出；如果你没有显式传 image_url，工具也会自动使用当前图片。
 
 回答风格：
 - 用中文回答。
@@ -129,14 +143,21 @@ async def chat_with_remember_item(
     """调用 RememberItem Agent 处理对话和物品操作"""
     logger.info(f"[用户]: {prompt}, image: {image}, thread_id: {thread_id}")
     user_token = current_user_id.set(user_id)
+    image_token = current_image_url.set(image.strip() if image else None)
     try:
         # 判断是否有图片，封装不同格式的消息
         if not image or image.strip() == "":
             message = HumanMessage(content=prompt)
         else:
+            image_context = (
+                f"{prompt}\n\n"
+                f"当前上传图片URL：{image}\n"
+                "如果用户要求保存或更新物品，并且这张图片与物品位置或物品本身有关，"
+                "请把这张图片作为物品图片保存。"
+            )
             message = HumanMessage(content=[
                 {"type": "image_url", "image_url": {"url": image}},
-                {"type": "text", "text": prompt}
+                {"type": "text", "text": image_context}
             ])
 
         # 流式调用Agent
@@ -152,6 +173,7 @@ async def chat_with_remember_item(
         logger.error(f"\n[错误]: {str(e)}")
         yield "这次处理失败了，可以换个说法再试一次。"
     finally:
+        current_image_url.reset(image_token)
         current_user_id.reset(user_token)
 
 # 清空会话

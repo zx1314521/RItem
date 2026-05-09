@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from app.agents.app import add_item, current_image_url, current_user_id
 from app.main import app
 from app.services import auth as auth_service
 
@@ -206,6 +207,26 @@ class ApiBoundaryTests(unittest.TestCase):
             headers=owner_headers,
         )
         self.assertEqual(owner_delete.status_code, 204)
+
+    def test_agent_add_item_uses_current_uploaded_image(self):
+        _, user = self._register_and_login(phone=self.phone)
+        image_url = "https://example.com/fridge.jpg"
+        user_token = current_user_id.set(user["id"])
+        image_token = current_image_url.set(image_url)
+        try:
+            item = add_item.invoke(
+                {
+                    "name": "apple",
+                    "description": "in the fridge",
+                }
+            )
+        finally:
+            current_image_url.reset(image_token)
+            current_user_id.reset(user_token)
+
+        self.assertEqual(item["name"], "apple")
+        self.assertEqual(item["description"], "in the fridge")
+        self.assertEqual(item["image_url"], image_url)
 
     def test_settings_boundaries(self):
         headers, user = self._register_and_login(phone=self.phone)
