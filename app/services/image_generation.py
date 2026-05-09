@@ -45,9 +45,21 @@ def generate_item_image(
         raise ImageGenerationError("DASHSCOPE_API_KEY 未配置，无法调用图片生成模型")
 
     prompt = _build_item_image_prompt(name, description)
+    logger.info(
+        "Generating item image: user_id=%s name=%s model=%s",
+        user_id,
+        name,
+        DASHSCOPE_IMAGE_MODEL,
+    )
     temporary_url = _call_dashscope_image(api_key, prompt)
 
     stored_url = _copy_image_to_oss(user_id, temporary_url)
+    logger.info(
+        "Generated item image: user_id=%s name=%s stored=%s",
+        user_id,
+        name,
+        bool(stored_url),
+    )
     return GeneratedImage(
         url=stored_url or temporary_url,
         temporary_url=temporary_url,

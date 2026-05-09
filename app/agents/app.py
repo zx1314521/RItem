@@ -131,14 +131,8 @@ def add_item(name: str, description: str | None = None, image_url: str | None = 
     return item
 
 
-@tool
 def generate_item_image(name: str, description: str | None = None) -> dict:
-    """Generate a reference image for an item and return a URL.
-
-    Use this before add_item when the user wants to save an item but did not
-    upload a picture. The image is copied to OSS for long-term access when OSS is
-    configured; otherwise the returned URL may be temporary.
-    """
+    """Generate a reference image for an item and return a URL."""
     try:
         generated = image_generation.generate_item_image(
             user_id=_require_user_id(),
@@ -198,7 +192,7 @@ system_prompt = """
 你可以和用户自然对话，也可以调用工具操作物品库：
 1. 用户想找某个物品、问“我有没有某东西”“帮我查一下”时，优先调用 search_items。
 2. 用户明确说要记住、添加、保存某个物品时，调用 add_item。物品名称必填，描述和图片可选。
-3. 如果用户没有上传图片，但你能判断这是在新增物品，例如“我把鼠标放在客厅中”，应先调用 generate_item_image 生成物品参考图，再把返回的 image_url 传给 add_item。即使你没有显式传 image_url，add_item 也会尽量自动生成图片。
+3. 如果用户没有上传图片，但你能判断这是在新增物品，例如“我把鼠标放在客厅中”，直接调用 add_item；add_item 会自动尝试生成物品参考图并保存图片 URL。
 4. 用户想修改某个已保存物品时，先确认或查到 item_id，再调用 update_saved_item。
 5. 用户想删除物品时，先确认或查到 item_id，再调用 delete_saved_item。
 6. 用户上传图片时，如果图片里能看出物品信息，可以结合图片和文字帮助生成名称/描述；如果信息不足，要简短追问。
@@ -218,7 +212,6 @@ agent = create_agent(
     tools=[
         search_items,
         add_item,
-        generate_item_image,
         update_saved_item,
         delete_saved_item,
     ],
