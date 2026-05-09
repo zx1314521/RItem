@@ -7,6 +7,7 @@ from langchain_core.tools import tool
 
 from app.common.logger import logger
 from app.services import items as item_service
+from app.services import image_generation
 from dotenv import load_dotenv
 
 from langchain.chat_models import init_chat_model
@@ -17,7 +18,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 load_dotenv()
 
 model = init_chat_model(
-    model=os.getenv("REMEMBER_ITEM_MODEL", "qwen3.5-flash"),
+    model=os.getenv("REMEMBER_ITEM_MODEL", "qwen3.6-35b-a3b"),
     model_provider="openai",
     base_url=os.getenv("DASHSCOPE_BASE_URL"),
     api_key=os.getenv("DASHSCOPE_API_KEY"),
@@ -91,14 +92,54 @@ def add_item(name: str, description: str | None = None, image_url: str | None = 
     """Add a new remembered item with required name and optional description/image URL.
 
     If the user uploaded an image in the current message, use that image URL when
-    image_url is not explicitly provided.
+    image_url is not explicitly provided. If no image is available, generate a
+    reference image for the item and save that URL when possible.
     """
-    return item_service.create_item(
+    user_id = _require_user_id()
+    resolved_image_url = image_url or current_image_url.get()
+    generated_image = None
+    if not resolved_image_url:
+        generated_image = image_generation.generate_item_image(
+            user_id=user_id,
+            name=name,
+            description=description,
+        )
+        if generated_image:
+            resolved_image_url = generated_image.url
+
+    item = item_service.create_item(
+        user_id=user_id,
+        name=name,
+        description=description,
+        image_url=resolved_image_url,
+    )
+    if generated_image:
+        item["image_generated"] = True
+        item["image_stored"] = generated_image.stored
+    return item
+
+
+@tool
+def generate_item_image(name: str, description: str | None = None) -> dict:
+    """Generate a reference image for an item and return a URL.
+
+    Use this before add_item when the user wants to save an item but did not
+    upload a picture. The image is copied to OSS for long-term access when OSS is
+    configured; otherwise the returned URL may be temporary.
+    """
+    generated = image_generation.generate_item_image(
         user_id=_require_user_id(),
         name=name,
         description=description,
-        image_url=image_url or current_image_url.get(),
     )
+    if not generated:
+        return {"success": False, "image_url": None}
+    return {
+        "success": True,
+        "image_url": generated.url,
+        "stored": generated.stored,
+        "temporary_url": generated.temporary_url,
+    }
 
 
 @tool
@@ -140,21 +181,29 @@ system_prompt = """
 你可以和用户自然对话，也可以调用工具操作物品库：
 1. 用户想找某个物品、问“我有没有某东西”“帮我查一下”时，优先调用 search_items。
 2. 用户明确说要记住、添加、保存某个物品时，调用 add_item。物品名称必填，描述和图片可选。
-3. 用户想修改某个已保存物品时，先确认或查到 item_id，再调用 update_saved_item。
-4. 用户想删除物品时，先确认或查到 item_id，再调用 delete_saved_item。
-5. 用户上传图片时，如果图片里能看出物品信息，可以结合图片和文字帮助生成名称/描述；如果信息不足，要简短追问。
-6. 如果用户一边上传图片一边要求保存物品，例如“保存苹果在冰箱里”并附带冰箱照片，调用 add_item 时应保存这张图片。当前上传图片的 URL 会在用户消息中以“当前上传图片URL”给出；如果你没有显式传 image_url，工具也会自动使用当前图片。
+3. 如果用户没有上传图片，但你能判断这是在新增物品，例如“我把鼠标放在客厅中”，应先调用 generate_item_image 生成物品参考图，再把返回的 image_url 传给 add_item。即使你没有显式传 image_url，add_item 也会尽量自动生成图片。
+4. 用户想修改某个已保存物品时，先确认或查到 item_id，再调用 update_saved_item。
+5. 用户想删除物品时，先确认或查到 item_id，再调用 delete_saved_item。
+6. 用户上传图片时，如果图片里能看出物品信息，可以结合图片和文字帮助生成名称/描述；如果信息不足，要简短追问。
+7. 如果用户一边上传图片一边要求保存物品，例如“保存苹果在冰箱里”并附带冰箱照片，调用 add_item 时应保存这张图片。当前上传图片的 URL 会在用户消息中以“当前上传图片URL”给出；如果你没有显式传 image_url，工具也会自动使用当前图片。
 
 回答风格：
 - 用中文回答。
 - 工具操作成功后，明确告诉用户已完成，并概括物品名称、描述、图片是否保存。
+- 如果使用了 AI 生成图，告诉用户这张图是根据描述生成的参考图。
 - 如果查不到，告诉用户没有找到，并建议换关键词或直接新增。
 - 不要编造数据库里不存在的物品。
 """
 
 agent = create_agent(
     model = model,
-    tools=[search_items, add_item, update_saved_item, delete_saved_item],
+    tools=[
+        search_items,
+        add_item,
+        generate_item_image,
+        update_saved_item,
+        delete_saved_item,
+    ],
     middleware=[memory_middleware],
     checkpointer=checkpointer,
     system_prompt = system_prompt,
@@ -188,7 +237,7 @@ async def chat_with_remember_item(
             ])
 
         # 流式调用Agent
-        for chunk, metadata in agent.stream(
+        async for chunk, metadata in agent.astream(
             {"messages": [message]},
             {"configurable": {"thread_id": thread_id}},
             stream_mode="messages"

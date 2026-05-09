@@ -31,7 +31,11 @@ async def chat_endpoint(
             _scoped_thread_id(current_user["id"], request.thread_id),
             current_user["id"],
         ),
-        media_type="text/event-stream"
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

@@ -192,6 +192,10 @@ nano .env
 ```env
 DASHSCOPE_BASE_URL=
 DASHSCOPE_API_KEY=
+DASHSCOPE_IMAGE_MODEL=qwen-image-2.0-pro
+DASHSCOPE_IMAGE_SIZE=1024*1024
+REMEMBER_ITEM_MODEL=qwen3.6-35b-a3b
+REMEMBER_ITEM_GENERATE_IMAGES=true
 TAVILY_API_KEY=
 
 LANGSMITH_API_KEY=
@@ -201,11 +205,21 @@ LANGSMITH_PROJECT=RememberItem
 OSS_ACCESS_KEY_ID=
 OSS_ACCESS_KEY_SECRET=
 OSS_BUCKET=
+OSS_ENDPOINT=oss-cn-beijing.aliyuncs.com
+OSS_REGION=cn-beijing
 ```
 
 如果暂时不用图片上传，OSS 可以先不填。
 
 如果要用 AI 对话，必须配置对应的大模型 API Key。
+
+当前默认对话模型是 `qwen3.6-35b-a3b`。如果用户没有上传图片，但 AI 判断是在新增物品，后端会尝试用 `qwen-image-2.0-pro` 生成一张参考图，并复制到 OSS 后保存长期可访问的图片 URL。
+
+如果不想让新增物品时自动生成图片，可以设置：
+
+```env
+REMEMBER_ITEM_GENERATE_IMAGES=false
+```
 
 ## 五、安装后端依赖
 
@@ -347,6 +361,21 @@ server {
     server_name _;
 
     client_max_body_size 20m;
+
+    location /api/v1/chat/stream {
+        proxy_pass http://127.0.0.1:8002;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:8002;

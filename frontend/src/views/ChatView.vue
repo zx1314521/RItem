@@ -209,18 +209,29 @@ async function sendChat() {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
-    const last = chatMessages.value[chatMessages.value.length - 1];
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      last.content += decoder.decode(value, { stream: true });
+      appendAssistantContent(decoder.decode(value, { stream: true }));
       await scrollMessages();
     }
+    appendAssistantContent(decoder.decode());
+    const last = chatMessages.value[chatMessages.value.length - 1];
     if (!last.content.trim()) last.content = "我没有收到可显示的回复。";
     await loadThreads();
   } catch (error) {
     chatMessages.value[chatMessages.value.length - 1].content = error.message;
   }
+}
+
+function appendAssistantContent(text) {
+  if (!text) return;
+  const index = chatMessages.value.length - 1;
+  const current = chatMessages.value[index];
+  chatMessages.value.splice(index, 1, {
+    ...current,
+    content: `${current.content}${text}`,
+  });
 }
 
 async function pickChatImage(event) {

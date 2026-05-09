@@ -1,6 +1,7 @@
 import sqlite3
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -234,6 +235,35 @@ class ApiBoundaryTests(unittest.TestCase):
         self.assertEqual(item["name"], "apple")
         self.assertEqual(item["description"], "in the fridge")
         self.assertEqual(item["image_url"], image_url)
+
+    def test_agent_add_item_generates_image_when_missing(self):
+        _, user = self._register_and_login(phone=self.phone)
+        generated_url = "https://example.com/generated-mouse.png"
+        user_token = current_user_id.set(user["id"])
+        image_token = current_image_url.set(None)
+        try:
+            with patch(
+                "app.agents.app.image_generation.generate_item_image",
+                return_value=SimpleNamespace(url=generated_url, stored=True),
+            ) as generate_image:
+                item = add_item.invoke(
+                    {
+                        "name": "mouse",
+                        "description": "in the living room",
+                    }
+                )
+        finally:
+            current_image_url.reset(image_token)
+            current_user_id.reset(user_token)
+
+        generate_image.assert_called_once_with(
+            user_id=user["id"],
+            name="mouse",
+            description="in the living room",
+        )
+        self.assertEqual(item["image_url"], generated_url)
+        self.assertTrue(item["image_generated"])
+        self.assertTrue(item["image_stored"])
 
     def test_chat_memory_summary_is_hidden_from_user_stream(self):
         self.assertFalse(
