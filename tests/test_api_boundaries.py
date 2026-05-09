@@ -5,7 +5,14 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.agents.app import add_item, current_image_url, current_user_id
+from app.agents.app import (
+    INTERNAL_SUMMARY_PREFIX,
+    add_item,
+    current_image_url,
+    current_user_id,
+    _is_internal_summary_message,
+    _is_user_visible_stream_chunk,
+)
 from app.main import app
 from app.services import auth as auth_service
 
@@ -227,6 +234,20 @@ class ApiBoundaryTests(unittest.TestCase):
         self.assertEqual(item["name"], "apple")
         self.assertEqual(item["description"], "in the fridge")
         self.assertEqual(item["image_url"], image_url)
+
+    def test_chat_memory_summary_is_hidden_from_user_stream(self):
+        self.assertFalse(
+            _is_user_visible_stream_chunk(
+                {"langgraph_node": "SummarizationMiddleware.before_model"}
+            )
+        )
+        self.assertTrue(_is_user_visible_stream_chunk({"langgraph_node": "model"}))
+        self.assertTrue(_is_user_visible_stream_chunk({}))
+
+        self.assertTrue(
+            _is_internal_summary_message(f"{INTERNAL_SUMMARY_PREFIX}\n\nSESSION INTENT")
+        )
+        self.assertFalse(_is_internal_summary_message("这里是正常用户消息"))
 
     def test_settings_boundaries(self):
         headers, user = self._register_and_login(phone=self.phone)

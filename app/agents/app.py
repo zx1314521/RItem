@@ -54,6 +54,7 @@ memory_middleware = SummarizationMiddleware(
     trigger=("messages", MEMORY_SUMMARY_TRIGGER_MESSAGES),
     keep=("messages", MEMORY_SUMMARY_KEEP_MESSAGES),
 )
+INTERNAL_SUMMARY_PREFIX = "Here is a summary of the conversation to date:"
 
 
 def _require_user_id() -> int:
@@ -61,6 +62,18 @@ def _require_user_id() -> int:
     if user_id is None:
         raise RuntimeError("Missing current user")
     return user_id
+
+
+def _is_user_visible_stream_chunk(metadata: dict | None) -> bool:
+    """Only stream the final agent model node, not middleware-internal model calls."""
+    node = (metadata or {}).get("langgraph_node")
+    return node in (None, "model")
+
+
+def _is_internal_summary_message(content) -> bool:
+    if not isinstance(content, str):
+        return False
+    return content.startswith(INTERNAL_SUMMARY_PREFIX)
 
 
 @tool
@@ -180,7 +193,11 @@ async def chat_with_remember_item(
             {"configurable": {"thread_id": thread_id}},
             stream_mode="messages"
         ):
-            if isinstance(chunk, AIMessageChunk) and chunk.content:
+            if (
+                isinstance(chunk, AIMessageChunk)
+                and chunk.content
+                and _is_user_visible_stream_chunk(metadata)
+            ):
                 yield chunk.content
 
     except Exception as e:
@@ -221,6 +238,8 @@ def get_messages(thread_id: str) -> list[dict[str, str]]:
     result = []
     for msg in messages:
         if not msg.content:
+            continue
+        if _is_internal_summary_message(msg.content):
             continue
 
         if isinstance(msg, HumanMessage):
