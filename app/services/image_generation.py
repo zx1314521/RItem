@@ -27,24 +27,25 @@ class GeneratedImage:
     stored: bool
 
 
+class ImageGenerationError(RuntimeError):
+    """Raised when an item reference image cannot be generated."""
+
+
 def generate_item_image(
     *,
     user_id: int,
     name: str,
     description: str | None = None,
-) -> GeneratedImage | None:
+) -> GeneratedImage:
     if os.getenv("REMEMBER_ITEM_GENERATE_IMAGES", "true").lower() == "false":
-        return None
+        raise ImageGenerationError("图片生成功能已关闭")
 
     api_key = os.getenv("DASHSCOPE_API_KEY")
     if not api_key:
-        logger.warning("Skipping generated image: DASHSCOPE_API_KEY is not configured")
-        return None
+        raise ImageGenerationError("DASHSCOPE_API_KEY 未配置，无法调用图片生成模型")
 
     prompt = _build_item_image_prompt(name, description)
     temporary_url = _call_dashscope_image(api_key, prompt)
-    if not temporary_url:
-        return None
 
     stored_url = _copy_image_to_oss(user_id, temporary_url)
     return GeneratedImage(
@@ -66,7 +67,7 @@ def _build_item_image_prompt(name: str, description: str | None = None) -> str:
     )[:800]
 
 
-def _call_dashscope_image(api_key: str, prompt: str) -> str | None:
+def _call_dashscope_image(api_key: str, prompt: str) -> str:
     payload = {
         "model": DASHSCOPE_IMAGE_MODEL,
         "input": {
@@ -102,20 +103,31 @@ def _call_dashscope_image(api_key: str, prompt: str) -> str | None:
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         logger.error("DashScope image generation failed: status=%s body=%s", exc.code, detail)
-        return None
+        raise ImageGenerationError(f"图片生成接口调用失败：HTTP {exc.code}")
     except Exception as exc:
         logger.error("DashScope image generation failed: %s", exc)
-        return None
+        raise ImageGenerationError(f"图片生成接口调用失败：{exc}")
 
     try:
         result = json.loads(body)
         contents = result["output"]["choices"][0]["message"]["content"]
         for item in contents:
-            image_url = item.get("image")
+            image_url = _extract_image_url(item.get("image"))
             if image_url:
                 return image_url
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
         logger.error("Unexpected DashScope image response: %s body=%s", exc, body)
+        raise ImageGenerationError("图片生成接口返回格式异常")
+    raise ImageGenerationError("图片生成接口没有返回图片 URL")
+
+
+def _extract_image_url(value) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        url = value.get("url")
+        if isinstance(url, str):
+            return url
     return None
 
 

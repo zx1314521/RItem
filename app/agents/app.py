@@ -98,14 +98,23 @@ def add_item(name: str, description: str | None = None, image_url: str | None = 
     user_id = _require_user_id()
     resolved_image_url = image_url or current_image_url.get()
     generated_image = None
+    image_generation_error = None
     if not resolved_image_url:
-        generated_image = image_generation.generate_item_image(
-            user_id=user_id,
-            name=name,
-            description=description,
-        )
-        if generated_image:
+        try:
+            generated_image = image_generation.generate_item_image(
+                user_id=user_id,
+                name=name,
+                description=description,
+            )
             resolved_image_url = generated_image.url
+        except image_generation.ImageGenerationError as exc:
+            image_generation_error = str(exc)
+            logger.warning(
+                "Item image generation skipped: user_id=%s name=%s reason=%s",
+                user_id,
+                name,
+                image_generation_error,
+            )
 
     item = item_service.create_item(
         user_id=user_id,
@@ -116,6 +125,9 @@ def add_item(name: str, description: str | None = None, image_url: str | None = 
     if generated_image:
         item["image_generated"] = True
         item["image_stored"] = generated_image.stored
+    elif image_generation_error:
+        item["image_generated"] = False
+        item["image_generation_error"] = image_generation_error
     return item
 
 
@@ -127,13 +139,18 @@ def generate_item_image(name: str, description: str | None = None) -> dict:
     upload a picture. The image is copied to OSS for long-term access when OSS is
     configured; otherwise the returned URL may be temporary.
     """
-    generated = image_generation.generate_item_image(
-        user_id=_require_user_id(),
-        name=name,
-        description=description,
-    )
-    if not generated:
-        return {"success": False, "image_url": None}
+    try:
+        generated = image_generation.generate_item_image(
+            user_id=_require_user_id(),
+            name=name,
+            description=description,
+        )
+    except image_generation.ImageGenerationError as exc:
+        return {
+            "success": False,
+            "image_url": None,
+            "error": str(exc),
+        }
     return {
         "success": True,
         "image_url": generated.url,
@@ -191,6 +208,7 @@ system_prompt = """
 - 用中文回答。
 - 工具操作成功后，明确告诉用户已完成，并概括物品名称、描述、图片是否保存。
 - 如果使用了 AI 生成图，告诉用户这张图是根据描述生成的参考图。
+- 如果 add_item 返回 image_generation_error，说明物品已保存但图片生成失败；不要说“本次未上传”，要把失败原因简短告诉用户。
 - 如果查不到，告诉用户没有找到，并建议换关键词或直接新增。
 - 不要编造数据库里不存在的物品。
 """

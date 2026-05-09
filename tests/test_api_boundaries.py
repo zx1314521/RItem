@@ -16,6 +16,7 @@ from app.agents.app import (
 )
 from app.main import app
 from app.services import auth as auth_service
+from app.services.image_generation import ImageGenerationError
 
 
 class ApiBoundaryTests(unittest.TestCase):
@@ -264,6 +265,41 @@ class ApiBoundaryTests(unittest.TestCase):
         self.assertEqual(item["image_url"], generated_url)
         self.assertTrue(item["image_generated"])
         self.assertTrue(item["image_stored"])
+
+    def test_agent_add_item_reports_image_generation_error(self):
+        _, user = self._register_and_login(phone=self.phone)
+        user_token = current_user_id.set(user["id"])
+        image_token = current_image_url.set(None)
+        try:
+            with patch(
+                "app.agents.app.image_generation.generate_item_image",
+                side_effect=Exception("boom"),
+            ):
+                with self.assertRaises(Exception):
+                    add_item.invoke(
+                        {
+                            "name": "bad",
+                            "description": "bad",
+                        }
+                    )
+            with patch(
+                "app.agents.app.image_generation.generate_item_image",
+                side_effect=ImageGenerationError("DASHSCOPE_API_KEY 未配置"),
+            ):
+                item = add_item.invoke(
+                    {
+                        "name": "banana",
+                        "description": "on the desk",
+                    }
+                )
+        finally:
+            current_image_url.reset(image_token)
+            current_user_id.reset(user_token)
+
+        self.assertEqual(item["name"], "banana")
+        self.assertIsNone(item["image_url"])
+        self.assertFalse(item["image_generated"])
+        self.assertIn("DASHSCOPE_API_KEY", item["image_generation_error"])
 
     def test_chat_memory_summary_is_hidden_from_user_stream(self):
         self.assertFalse(
