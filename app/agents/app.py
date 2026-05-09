@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 from langchain.chat_models import init_chat_model
 from langchain.agents import create_agent
+from langchain.agents.middleware import SummarizationMiddleware
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 load_dotenv()
@@ -40,6 +41,18 @@ current_user_id: ContextVar[int | None] = ContextVar(
 current_image_url: ContextVar[str | None] = ContextVar(
     "current_image_url",
     default=None,
+)
+
+MEMORY_SUMMARY_TRIGGER_MESSAGES = int(
+    os.getenv("REMEMBER_ITEM_MEMORY_TRIGGER_MESSAGES", "10"),
+)
+MEMORY_SUMMARY_KEEP_MESSAGES = int(
+    os.getenv("REMEMBER_ITEM_MEMORY_KEEP_MESSAGES", "9"),
+)
+memory_middleware = SummarizationMiddleware(
+    model=model,
+    trigger=("messages", MEMORY_SUMMARY_TRIGGER_MESSAGES),
+    keep=("messages", MEMORY_SUMMARY_KEEP_MESSAGES),
 )
 
 
@@ -129,6 +142,7 @@ system_prompt = """
 agent = create_agent(
     model = model,
     tools=[search_items, add_item, update_saved_item, delete_saved_item],
+    middleware=[memory_middleware],
     checkpointer=checkpointer,
     system_prompt = system_prompt,
 )
